@@ -1,16 +1,24 @@
-# Art Auction Ticker - AI-Powered Scraper
+# Art Auction Ticker - Automated Christie's Scraper
 
-An automated scraper that collects notable art auction sales from Christie's and Sotheby's, then uses AI to select the 20 most interesting sales from each auction house for display on a luxury fashion website.
+**Fully automated** scraper that collects the top 20 most expensive paintings from Christie's each month. No manual work, no API keys, completely free to run!
 
-## Features
+## 🎯 What It Does
 
-- **Automated scraping** of Christie's and Sotheby's monthly auction results
-- **AI-powered selection** using OpenAI to identify the most notable sales (mix of high prices and famous artists)
-- **Selenium-based** web scraping for dynamic content
-- **Monthly scheduling** capability
-- **JSON output** ready for frontend consumption
+1. **Scrapes Christie's** - Goes through all art/painting auctions for a given month
+2. **Finds prices** - Intelligently extracts sale prices using pattern matching
+3. **Sorts by price** - Automatically ranks all paintings by price (highest first)
+4. **Selects top 20** - Returns the 20 most expensive paintings
+5. **Saves to JSON** - Ready to display on your website
 
-## Setup
+## ⚡ Key Features
+
+- ✅ **100% Automated** - No manual selector updates needed
+- ✅ **Intelligent scraping** - Adapts to HTML changes automatically
+- ✅ **FREE** - No API costs, no subscriptions
+- ✅ **Self-contained** - Only needs Chrome/Chromium installed
+- ✅ **Monthly ready** - Set it and forget it
+
+## 🚀 Quick Start
 
 ### 1. Install Dependencies
 
@@ -18,81 +26,27 @@ An automated scraper that collects notable art auction sales from Christie's and
 pip install -r requirements.txt
 ```
 
-### 2. Configure Environment Variables
-
-Copy `.env.example` to `.env` and fill in your credentials:
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env`:
-```
-OPENAI_API_KEY=sk-your-openai-api-key
-SOTHEBYS_EMAIL=your-email@example.com
-SOTHEBYS_PASSWORD=your-password
-```
-
-**Note:** Sotheby's requires login to view sale prices. You'll need a free account.
-
-### 3. Run the Scraper
+### 2. Run the Scraper
 
 ```bash
 python main.py
 ```
 
-This will:
-1. Scrape Christie's results for the previous month
-2. Scrape Sotheby's results for the previous month
-3. Use AI to select top 20 sales from each auction house
-4. Save results to `data/auction_ticker_YYYY_MM.json`
+That's it! It will scrape the previous month's data automatically.
 
-## Project Structure
+### 3. Check the Output
 
-```
-art-auction-ticker/
-├── scrapers/
-│   ├── christies_scraper.py   # Christie's scraper
-│   └── sothebys_scraper.py    # Sotheby's scraper (with login)
-├── ai/
-│   └── selector.py            # AI-powered sale selection
-├── data/                      # Output directory for JSON files
-├── main.py                    # Main orchestration script
-├── requirements.txt           # Python dependencies
-├── .env.example              # Environment template
-└── README.md
-```
-
-## How It Works
-
-### Christie's Scraping
-- URL pattern: `https://www.christies.com/en/results?month=MM&year=YYYY`
-- No authentication required
-- Scrapes all sales from specified month
-
-### Sotheby's Scraping
-- URL pattern: `https://www.sothebys.com/en/results?from=MM%2F1%2FYYYY&to=MM%2F30%2FYYYY`
-- **Requires login** to view prices
-- Scrapes individual auction pages
-
-### AI Selection
-- Uses OpenAI GPT-4 to analyze all scraped sales
-- Selects top 20 based on:
-  - High sale prices
-  - Famous/significant artists
-  - Art historical importance
-- Falls back to price-based sorting if AI fails
-
-## Output Format
-
-The final JSON output (`data/auction_ticker_YYYY_MM.json`) looks like:
+Results saved to: `data/auction_ticker_YYYY_MM.json`
 
 ```json
 {
   "month": "2025-11",
-  "generated_at": "2025-11-30T12:00:00",
-  "total_sales": 40,
-  "christies": [
+  "generated_at": "2025-11-30T10:00:00",
+  "total_scraped": 456,
+  "total_with_prices": 320,
+  "top_sales_count": 20,
+  "selection_method": "Price-based (highest to lowest)",
+  "sales": [
     {
       "artist": "Pablo Picasso",
       "title": "Femme au béret rouge",
@@ -100,31 +54,57 @@ The final JSON output (`data/auction_ticker_YYYY_MM.json`) looks like:
       "price_realized": 15400000,
       "currency": "USD",
       "auction_house": "Christie's",
-      "sale_date": "2025-11-15",
       "url": "https://www.christies.com/..."
-    }
-  ],
-  "sothebys": [...]
+    },
+    ...
+  ]
 }
 ```
 
-## Monthly Automation
+## 🧠 How It Works (Intelligent Scraping)
 
-### Option 1: Cron Job (Linux/Mac)
+The scraper doesn't rely on fixed CSS selectors. Instead, it uses **multiple strategies**:
 
-Add to crontab to run on the last day of each month:
+### Finding Auction Links
+1. Searches for "View Results" / "View Auction" text
+2. Looks for URLs containing "auction" or "sale"
+3. Detects common container patterns (cards, sections)
+
+### Extracting Lot Data
+- **Artist**: Tries 4 class patterns + heading fallbacks
+- **Title**: Tries 3 class patterns + heading fallbacks
+- **Price**: Searches ALL text for currency symbols ($, £, €)
+- **Auto-detection**: Finds repeating HTML structures
+
+### Why This Works
+Even if Christie's changes their CSS classes, the scraper will:
+- Still find currency symbols in the page
+- Still detect repeating patterns (lot listings)
+- Still match semantic keywords like "artist", "title", "price"
+
+## 📅 Monthly Automation
+
+### Option 1: Cron Job (Mac/Linux)
+
+Run on the last day of each month:
+
 ```bash
-0 0 28-31 * * [ "$(date -d tomorrow +\%d)" = "01" ] && cd /path/to/art-auction-ticker && python main.py
+# Edit crontab
+crontab -e
+
+# Add this line (runs at midnight on day 28-31 if next day is the 1st)
+0 0 28-31 * * [ "$(date -d tomorrow +\%d)" = "01" ] && cd /path/to/art-auction-ticker && python3 main.py
 ```
 
 ### Option 2: GitHub Actions
 
 Create `.github/workflows/monthly-scrape.yml`:
+
 ```yaml
-name: Monthly Art Auction Scrape
+name: Monthly Christie's Scrape
 on:
   schedule:
-    - cron: '0 0 28-31 * *'  # Last day of month
+    - cron: '0 0 28 * *'  # 28th of each month
 jobs:
   scrape:
     runs-on: ubuntu-latest
@@ -135,54 +115,112 @@ jobs:
           python-version: '3.10'
       - run: pip install -r requirements.txt
       - run: python main.py
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          SOTHEBYS_EMAIL: ${{ secrets.SOTHEBYS_EMAIL }}
-          SOTHEBYS_PASSWORD: ${{ secrets.SOTHEBYS_PASSWORD }}
+      - uses: actions/upload-artifact@v3
+        with:
+          name: auction-data
+          path: data/*.json
 ```
 
-## Testing
+### Option 3: Manual
 
-Test individual scrapers:
+Just run whenever you want:
 
 ```bash
-# Test Christie's scraper
-python scrapers/christies_scraper.py
+# Scrape November 2025
+python main.py  # Defaults to previous month
 
-# Test Sotheby's scraper (requires .env)
-python scrapers/sothebys_scraper.py
-
-# Test AI selector
-python ai/selector.py
+# Or specify a month
+python -c "from main import scrape_and_select; scrape_and_select(2025, 11)"
 ```
 
-## Troubleshooting
+## 🎨 Frontend Display
 
-### "Sotheby's credentials not found"
-- Make sure `.env` file exists with `SOTHEBYS_EMAIL` and `SOTHEBYS_PASSWORD`
+The JSON output is ready to use in a ticker component:
 
-### "OPENAI_API_KEY not found"
-- Add your OpenAI API key to `.env`
+```javascript
+// Example: React ticker component
+fetch('/data/auction_ticker_2025_11.json')
+  .then(res => res.json())
+  .then(data => {
+    data.sales.forEach(sale => {
+      console.log(`${sale.artist} | ${sale.title} | ${sale.price}`)
+    })
+  })
+```
 
-### Scraper returns no results
-- The HTML selectors may need updating (Christie's/Sotheby's change their website)
-- Run with `headless=False` to see what's happening:
-  ```python
-  scraper = ChristiesScraper(headless=False)
-  ```
+## 🔧 Customization
 
-### Login fails for Sotheby's
-- Verify credentials are correct
-- Check if Sotheby's has CAPTCHA (may need manual intervention)
-- Try running with `headless=False` to debug
+### Change Number of Results
 
-## Next Steps
+```python
+# Get top 40 instead of 20
+scrape_and_select(top_n=40)
+```
 
-1. **Frontend Integration**: Build React ticker component to display this data
-2. **Improve Selectors**: Update HTML selectors after inspecting actual website structure
-3. **Error Handling**: Add retry logic and better error recovery
-4. **Caching**: Store cookies for faster Sotheby's authentication
-5. **Monitoring**: Add alerts for scraping failures
+### Scrape Different Months
+
+```python
+# Scrape January 2024
+scrape_and_select(year=2024, month=1)
+```
+
+### Run in Background
+
+```python
+# Use headless=True (default) for no browser window
+# Use headless=False to see what it's doing
+from scrapers.christies_scraper import ChristiesScraper
+
+scraper = ChristiesScraper(headless=False)  # Show browser
+```
+
+## 📁 Project Structure
+
+```
+art-auction-ticker/
+├── scrapers/
+│   └── christies_scraper.py   # Intelligent Christie's scraper
+├── data/                       # Output directory
+├── main.py                     # Main script
+├── requirements.txt            # Python dependencies
+└── README.md                   # This file
+```
+
+## 🐛 Troubleshooting
+
+### "Chrome binary not found"
+Install Chrome or Chromium:
+```bash
+# Mac
+brew install --cask google-chrome
+
+# Ubuntu/Debian
+sudo apt-get install chromium-browser
+```
+
+### No results found
+- Check the URL is correct for the month
+- Christie's may have changed their structure (scraper should adapt, but check logs)
+- Run with `headless=False` to see the browser
+
+### Prices not extracted
+- Scraper looks for $, £, € symbols
+- If Christie's uses different currency format, update `parse_price()` in `christies_scraper.py`
+
+## 🎯 Next Steps
+
+1. **Test it**: Run `python main.py` to scrape previous month
+2. **Check output**: Look at `data/auction_ticker_*.json`
+3. **Build frontend**: Use the JSON to display on your website
+4. **Automate**: Set up monthly cron job or GitHub Actions
+5. **Customize**: Adjust number of results, filters, etc.
+
+## 📝 Notes
+
+- **No login required** - Christie's results are public
+- **Respects rate limits** - 2-second delay between auction pages
+- **Saves progress** - Raw data saved in case you need it
+- **Christie's only** - Sotheby's removed due to CAPTCHA issues
 
 ## License
 
