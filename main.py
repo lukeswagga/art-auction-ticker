@@ -1,15 +1,13 @@
 """
 Main orchestration script for art auction ticker scraping
-Runs monthly to scrape Christie's, then selects top 20
-(Sotheby's disabled due to CAPTCHA/login issues)
+Runs monthly to scrape Christie's and get top 20 most expensive paintings
+No AI needed - just sorts by price!
 """
 
 import os
 import json
 from datetime import datetime, timedelta
 from scrapers.christies_scraper import ChristiesScraper
-# from scrapers.sothebys_scraper import SothebysScraper  # Disabled for now
-from ai.selector import ArtSaleSelector
 
 
 def get_previous_month() -> tuple:
@@ -20,12 +18,15 @@ def get_previous_month() -> tuple:
     return last_month.year, last_month.month
 
 
-def scrape_and_select(year: int = None, month: int = None):
+def scrape_and_select(year: int = None, month: int = None, top_n: int = 20):
     """
-    Simplified pipeline (Christie's only):
-    1. Scrape Christie's
-    2. Use AI to select top 40 notable pieces
-    3. Save final results
+    Simple automated pipeline:
+    1. Scrape all Christie's auctions for the month
+    2. Sort by price (highest first)
+    3. Take top 20 most expensive
+    4. Save results
+
+    No AI, no manual work - fully automated!
     """
 
     # Use previous month if not specified
@@ -33,54 +34,76 @@ def scrape_and_select(year: int = None, month: int = None):
         year, month = get_previous_month()
 
     print(f"=" * 60)
-    print(f"Art Auction Ticker - Christie's Only - {year}-{month:02d}")
+    print(f"Christie's Top {top_n} Most Expensive - {year}-{month:02d}")
     print(f"=" * 60)
 
     # Create data directory if it doesn't exist
     os.makedirs('data', exist_ok=True)
 
-    # Step 1: Scrape Christie's
-    print("\n[1/3] Scraping Christie's...")
+    # Step 1: Scrape ALL Christie's sales for the month
+    print(f"\n[1/3] Scraping Christie's auctions for {year}-{month:02d}...")
     christies_scraper = ChristiesScraper(headless=True)
-    christies_sales = christies_scraper.scrape_month(year, month)
-    christies_scraper.save_to_json(christies_sales, f'data/christies_raw_{year}_{month:02d}.json')
+    all_sales = christies_scraper.scrape_month(year, month)
 
-    # Step 2: AI Selection for Christie's (select 40 instead of 20)
-    print("\n[2/3] AI selecting top 40 Christie's sales...")
-    selector = ArtSaleSelector()
-    christies_selected = selector.select_notable_sales(christies_sales, "Christie's", 40)
-    selector.save_selected(christies_selected, f'data/christies_selected_{year}_{month:02d}.json')
+    # Save raw data
+    christies_scraper.save_to_json(all_sales, f'data/christies_raw_{year}_{month:02d}.json')
+    print(f"  Scraped {len(all_sales)} total paintings")
+
+    # Step 2: Sort by price and take top N
+    print(f"\n[2/3] Selecting top {top_n} by price...")
+
+    # Filter out sales without prices
+    sales_with_prices = [s for s in all_sales if s.get('price_realized') and s.get('price_realized') > 0]
+    print(f"  Found {len(sales_with_prices)} sales with valid prices")
+
+    # Sort by price (highest first)
+    sorted_sales = sorted(sales_with_prices, key=lambda x: x['price_realized'], reverse=True)
+
+    # Take top N
+    top_sales = sorted_sales[:top_n]
 
     # Step 3: Save final results
-    print("\n[3/3] Saving final results...")
-    combined = {
+    print(f"\n[3/3] Saving top {len(top_sales)} results...")
+
+    result = {
         'month': f"{year}-{month:02d}",
         'generated_at': datetime.now().isoformat(),
-        'total_sales': len(christies_selected),
-        'christies': christies_selected,
-        'note': 'Sotheby\'s disabled due to login/CAPTCHA issues'
+        'total_scraped': len(all_sales),
+        'total_with_prices': len(sales_with_prices),
+        'top_sales_count': len(top_sales),
+        'selection_method': 'Price-based (highest to lowest)',
+        'sales': top_sales
     }
 
     output_file = f'data/auction_ticker_{year}_{month:02d}.json'
     with open(output_file, 'w', encoding='utf-8') as f:
-        json.dump(combined, f, indent=2, ensure_ascii=False)
+        json.dump(result, f, indent=2, ensure_ascii=False)
 
-    print(f"\n✓ Complete! Final data saved to {output_file}")
-    print(f"  - Christie's: {len(christies_selected)} sales")
-    print(f"  - Total: {combined['total_sales']} sales")
+    print(f"\n✓ Complete! Top {len(top_sales)} sales saved to {output_file}")
+    print(f"  Total scraped: {len(all_sales)} paintings")
+    print(f"  With prices: {len(sales_with_prices)} paintings")
+    print(f"  Selected: {len(top_sales)} most expensive")
 
-    return combined
+    if top_sales:
+        print(f"\n  Price range:")
+        print(f"    Highest: {top_sales[0]['price']}")
+        print(f"    Lowest:  {top_sales[-1]['price']}")
+
+    return result
 
 
 if __name__ == "__main__":
-    # Run for previous month
-    results = scrape_and_select()
+    # Run for previous month, get top 20
+    results = scrape_and_select(top_n=20)
 
     # Print sample
     print("\n" + "=" * 60)
-    print("SAMPLE RESULTS")
+    print("TOP 5 MOST EXPENSIVE")
     print("=" * 60)
 
-    print("\nChristie's Top Sales:")
-    for sale in results['christies'][:5]:
-        print(f"  • {sale['artist']}: {sale['title']} - {sale['price']}")
+    for i, sale in enumerate(results['sales'][:5], 1):
+        artist = sale.get('artist', 'Unknown')
+        title = sale.get('title', 'Untitled')
+        price = sale.get('price', 'N/A')
+        print(f"  {i}. {artist}: {title}")
+        print(f"      {price}")
