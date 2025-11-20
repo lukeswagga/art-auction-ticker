@@ -120,46 +120,59 @@ class ChristiesScraper:
 
     def get_auction_links(self) -> List[str]:
         """
-        Get links to individual auction pages from main results page
-        Looks for "View Results" buttons/links
+        Intelligently find auction page links using multiple strategies
         """
         soup = BeautifulSoup(self.driver.page_source, 'lxml')
-        auction_links = []
+        auction_links = set()  # Use set to avoid duplicates
 
-        # TODO: Update selector based on actual HTML structure
-        # Look for links/buttons that say "View Results" or similar
-
-        # Try multiple patterns
-        patterns = [
-            soup.find_all('a', string=lambda x: x and 'view results' in x.lower()),
-            soup.find_all('a', string=lambda x: x and 'view auction' in x.lower()),
-            soup.find_all('button', string=lambda x: x and 'view results' in x.lower()),
-            # Look for links in auction cards
-            soup.find_all('a', class_=lambda x: x and 'auction' in x.lower()),
-        ]
-
-        for pattern in patterns:
-            for link in pattern:
+        # Strategy 1: Find links with auction-related text
+        text_patterns = ['view results', 'view auction', 'browse sale', 'explore auction']
+        for pattern in text_patterns:
+            links = soup.find_all('a', string=lambda x: x and pattern in str(x).lower())
+            for link in links:
                 href = link.get('href')
                 if href:
-                    # Build full URL
-                    if href.startswith('/'):
-                        full_url = 'https://www.christies.com' + href
-                    elif href.startswith('http'):
-                        full_url = href
-                    else:
-                        continue
+                    auction_links.add(self._build_full_url(href))
 
-                    # Avoid duplicates
-                    if full_url not in auction_links:
-                        auction_links.append(full_url)
+        # Strategy 2: Find links with auction/sale in href
+        all_links = soup.find_all('a', href=True)
+        for link in all_links:
+            href = link.get('href', '')
+            if any(keyword in href.lower() for keyword in ['auction', 'sale', '/results/']):
+                # Avoid calendar, search, and filter links
+                if not any(skip in href.lower() for skip in ['calendar', 'search', 'filter', 'category']):
+                    full_url = self._build_full_url(href)
+                    if 'christies.com' in full_url:
+                        auction_links.add(full_url)
 
-        return auction_links
+        # Strategy 3: Find links in common container classes
+        containers = soup.find_all(['div', 'article', 'section'], class_=lambda x: x and any(
+            keyword in str(x).lower() for keyword in ['sale', 'auction', 'event', 'card']
+        ))
+        for container in containers:
+            link = container.find('a', href=True)
+            if link:
+                href = link.get('href')
+                if href and 'auction' in href.lower() or 'sale' in href.lower():
+                    auction_links.add(self._build_full_url(href))
+
+        result = list(auction_links)
+        print(f"  Found {len(result)} unique auction links using {3} strategies")
+        return result
+
+    def _build_full_url(self, href: str) -> str:
+        """Build full URL from relative or absolute href"""
+        if href.startswith('http'):
+            return href
+        elif href.startswith('/'):
+            return 'https://www.christies.com' + href
+        else:
+            return 'https://www.christies.com/' + href
 
     def scrape_auction_page(self, auction_url: str) -> List[Dict]:
         """
         Scrape individual auction page to get lot data
-        Each lot has: artist, title, price, lot number, etc.
+        Uses intelligent pattern matching to find lots
         """
         self.driver.get(auction_url)
         time.sleep(3)
@@ -171,27 +184,56 @@ class ChristiesScraper:
         soup = BeautifulSoup(self.driver.page_source, 'lxml')
         lots = []
 
-        # TODO: Update selector based on actual auction page HTML
-        # Look for lot items
-        lot_items = soup.find_all(['div', 'article'], class_=lambda x: x and 'lot' in x.lower())
+        # Use multiple strategies to find lot items
+        lot_items = []
 
-        print(f"    Found {len(lot_items)} lots in this auction")
+        # Strategy 1: Elements with 'lot' in class
+        lot_items.extend(soup.find_all(['div', 'article'], class_=lambda x: x and 'lot' in str(x).lower()))
 
-        for item in lot_items:
+        # Strategy 2: Elements with 'item', 'product', 'artwork' in class
+        if len(lot_items) < 5:
+            lot_items.extend(soup.find_all(['div', 'article'], class_=lambda x: x and any(
+                keyword in str(x).lower() for keyword in ['item', 'product', 'artwork', 'object']
+            )))
+
+        # Strategy 3: Look for repeating structures (likely lot listings)
+        # Find divs/articles that appear multiple times with similar classes
+        if len(lot_items) < 5:
+            all_divs = soup.find_all(['div', 'article'])
+            class_counts = {}
+            for div in all_divs:
+                classes = ' '.join(div.get('class', []))
+                if classes:
+                    class_counts[classes] = class_counts.get(classes, 0) + 1
+
+            # Find most common class (likely the lot item class)
+            if class_counts:
+                most_common_class = max(class_counts.items(), key=lambda x: x[1])
+                if most_common_class[1] >= 5:  # At least 5 items
+                    print(f"    Detected repeating pattern: {most_common_class[0][:50]}... ({most_common_class[1]} items)")
+                    lot_items = soup.find_all(['div', 'article'], class_=most_common_class[0])
+
+        print(f"    Found {len(lot_items)} potential lots in this auction")
+
+        for i, item in enumerate(lot_items):
             try:
                 lot_data = self.extract_sale_data(item)
-                if lot_data and lot_data.get('price'):
+                if lot_data:
                     lots.append(lot_data)
+                    # Print first few successful extractions
+                    if len(lots) <= 3:
+                        print(f"      ✓ Lot {len(lots)}: {lot_data.get('artist', 'Unknown')[:30]} - {lot_data.get('price', 'No price')}")
             except Exception as e:
                 continue
 
+        print(f"    Successfully extracted {len(lots)} lots with data")
         return lots
 
     def extract_sale_data(self, item_element) -> Dict:
-        """Extract sale data from a single lot item"""
-        # TODO: Update these selectors based on actual Christie's HTML
-        # This is a template structure
-
+        """
+        Intelligently extract sale data using multiple strategies
+        Works even if Christie's changes their HTML structure
+        """
         data = {
             'artist': None,
             'title': None,
@@ -205,29 +247,110 @@ class ChristiesScraper:
             'url': None
         }
 
-        # Extract artist name
-        artist_elem = item_element.find(['h2', 'h3', 'div'], class_=lambda x: x and 'artist' in x.lower())
-        if artist_elem:
-            data['artist'] = artist_elem.get_text(strip=True)
+        # Strategy 1: Look for Christie's-specific classes (chr- prefix)
+        # Strategy 2: Look for common semantic classes
+        # Strategy 3: Look for headings and text patterns
 
-        # Extract artwork title
-        title_elem = item_element.find(['h3', 'h4', 'div'], class_=lambda x: x and 'title' in x.lower())
-        if title_elem:
-            data['title'] = title_elem.get_text(strip=True)
+        # ARTIST - try multiple approaches
+        artist_selectors = [
+            item_element.find(['h1', 'h2', 'h3'], class_=lambda x: x and 'artist' in str(x).lower()),
+            item_element.find(['div', 'span'], class_=lambda x: x and 'artist' in str(x).lower()),
+            item_element.find(['h1', 'h2', 'h3'], class_=lambda x: x and 'chr-' in str(x).lower()),
+            item_element.find(['div', 'p'], class_=lambda x: x and 'maker' in str(x).lower()),
+        ]
 
-        # Extract price
-        price_elem = item_element.find(['span', 'div'], class_=lambda x: x and ('price' in x.lower() or 'sold' in x.lower()))
+        for elem in artist_selectors:
+            if elem:
+                text = elem.get_text(strip=True)
+                # Artist names are usually short, all caps, or have specific patterns
+                if text and 10 < len(text) < 100:
+                    data['artist'] = text
+                    break
+
+        # If no artist found, try finding first heading
+        if not data['artist']:
+            first_heading = item_element.find(['h1', 'h2', 'h3', 'h4'])
+            if first_heading:
+                data['artist'] = first_heading.get_text(strip=True)
+
+        # TITLE - try multiple approaches
+        title_selectors = [
+            item_element.find(['h2', 'h3', 'h4'], class_=lambda x: x and 'title' in str(x).lower()),
+            item_element.find(['div', 'span', 'p'], class_=lambda x: x and 'title' in str(x).lower()),
+            item_element.find(['div', 'span'], class_=lambda x: x and 'description' in str(x).lower()),
+        ]
+
+        for elem in title_selectors:
+            if elem:
+                text = elem.get_text(strip=True)
+                if text and text != data['artist']:
+                    data['title'] = text
+                    break
+
+        # If no title, use second heading
+        if not data['title']:
+            headings = item_element.find_all(['h2', 'h3', 'h4', 'h5'])
+            if len(headings) >= 2:
+                data['title'] = headings[1].get_text(strip=True)
+            elif len(headings) == 1:
+                data['title'] = headings[0].get_text(strip=True)
+
+        # PRICE - look for currency symbols and price patterns
+        # Search all text for price indicators
+        price_elem = None
+
+        # Try class-based first
+        price_selectors = [
+            item_element.find(['span', 'div', 'p'], class_=lambda x: x and 'price' in str(x).lower()),
+            item_element.find(['span', 'div', 'p'], class_=lambda x: x and 'sold' in str(x).lower()),
+            item_element.find(['span', 'div', 'p'], class_=lambda x: x and 'realized' in str(x).lower()),
+            item_element.find(['span', 'div', 'p'], class_=lambda x: x and 'hammer' in str(x).lower()),
+        ]
+
+        for elem in price_selectors:
+            if elem:
+                text = elem.get_text(strip=True)
+                if any(sym in text for sym in ['$', '£', '€', 'USD', 'GBP', 'EUR']):
+                    price_elem = elem
+                    break
+
+        # If no class-based price, search all text for currency
+        if not price_elem:
+            all_text_elems = item_element.find_all(['span', 'div', 'p', 'strong', 'b'])
+            for elem in all_text_elems:
+                text = elem.get_text(strip=True)
+                # Look for price pattern: currency + numbers
+                if any(sym in text for sym in ['$', '£', '€']) and any(c.isdigit() for c in text):
+                    if len(text) < 50:  # Prices are usually short
+                        price_elem = elem
+                        break
+
         if price_elem:
             price_text = price_elem.get_text(strip=True)
             data['price'] = price_text
             data['price_realized'] = self.parse_price(price_text)
 
-        # Extract URL
+        # URL - find first link in element
         link_elem = item_element.find('a', href=True)
         if link_elem:
-            data['url'] = 'https://www.christies.com' + link_elem['href'] if link_elem['href'].startswith('/') else link_elem['href']
+            href = link_elem['href']
+            data['url'] = self._build_full_url(href)
 
-        return data if data['artist'] and data['price'] else None
+        # LOT NUMBER - look for lot/number patterns
+        lot_elem = item_element.find(['span', 'div'], class_=lambda x: x and 'lot' in str(x).lower())
+        if lot_elem:
+            lot_text = lot_elem.get_text(strip=True)
+            # Extract number from "Lot 123" or similar
+            import re
+            match = re.search(r'\d+', lot_text)
+            if match:
+                data['lot_number'] = match.group()
+
+        # Only return if we have at least artist OR title, and ideally price
+        if (data['artist'] or data['title']):
+            return data
+
+        return None
 
     def parse_price(self, price_text: str) -> int:
         """Parse price string to integer (e.g., '$1,234,567' -> 1234567)"""
