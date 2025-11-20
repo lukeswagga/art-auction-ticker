@@ -38,13 +38,23 @@ class ChristiesScraper:
         self.driver = webdriver.Chrome(service=service, options=chrome_options)
 
     def get_url_for_month(self, year: int, month: int) -> str:
-        """Generate Christie's results URL for specific month and year"""
-        return f"https://www.christies.com/en/results?month={month:02d}&year={year}"
+        """
+        Generate Christie's results URL for specific month and year with category filters
+        Categories: 17, 7, 22, 5 (art and paintings)
+        """
+        base_url = f"https://www.christies.com/en/results?month={month:02d}&year={year}"
+        # Add category filters for art and paintings
+        filters = "&filters=|category_17|category_7|category_22|category_5|"
+        return base_url + filters
 
     def scrape_month(self, year: int = None, month: int = None) -> List[Dict]:
         """
         Scrape auction results for a specific month
-        If year/month not provided, uses previous month
+        Multi-level scraping:
+        1. Load main results page with category filters
+        2. Find all "View Results" links for auctions
+        3. Click into each auction to get individual lots
+        4. Parse lot data (artist, title, price, etc.)
         """
         if year is None or month is None:
             # Default to previous month
@@ -64,16 +74,25 @@ class ChristiesScraper:
             self.driver.get(url)
 
             # Wait for page to load
-            time.sleep(5)  # Initial wait for dynamic content
+            time.sleep(5)
 
-            # Scroll to load more items (infinite scroll)
+            # Scroll to load all auctions
             self.scroll_to_load_all()
 
-            # Parse the page
-            sales = self.parse_results_page()
+            # STEP 1: Get all auction links (View Results buttons)
+            auction_links = self.get_auction_links()
+            print(f"Found {len(auction_links)} auctions to scrape")
 
-            print(f"Found {len(sales)} auction sales from Christie's")
-            return sales
+            # STEP 2: Scrape each auction
+            all_lots = []
+            for i, auction_url in enumerate(auction_links):
+                print(f"  Scraping auction {i+1}/{len(auction_links)}: {auction_url}")
+                lots = self.scrape_auction_page(auction_url)
+                all_lots.extend(lots)
+                time.sleep(2)  # Be polite to the server
+
+            print(f"Found {len(all_lots)} total lots from Christie's")
+            return all_lots
 
         except Exception as e:
             print(f"Error scraping Christie's: {str(e)}")
@@ -99,30 +118,74 @@ class ChristiesScraper:
                 break
             last_height = new_height
 
-    def parse_results_page(self) -> List[Dict]:
-        """Parse the results page and extract auction sale data"""
+    def get_auction_links(self) -> List[str]:
+        """
+        Get links to individual auction pages from main results page
+        Looks for "View Results" buttons/links
+        """
         soup = BeautifulSoup(self.driver.page_source, 'lxml')
-        sales = []
+        auction_links = []
 
-        # TODO: Inspect actual Christie's HTML structure and update selectors
-        # This is a placeholder - we need to inspect the real page structure
+        # TODO: Update selector based on actual HTML structure
+        # Look for links/buttons that say "View Results" or similar
 
-        # Look for auction lot items (common patterns)
-        # We'll need to adjust these selectors based on actual HTML
-        lot_items = soup.find_all(['div', 'article'], class_=lambda x: x and ('lot' in x.lower() or 'result' in x.lower() or 'item' in x.lower()))
+        # Try multiple patterns
+        patterns = [
+            soup.find_all('a', string=lambda x: x and 'view results' in x.lower()),
+            soup.find_all('a', string=lambda x: x and 'view auction' in x.lower()),
+            soup.find_all('button', string=lambda x: x and 'view results' in x.lower()),
+            # Look for links in auction cards
+            soup.find_all('a', class_=lambda x: x and 'auction' in x.lower()),
+        ]
 
-        print(f"Found {len(lot_items)} potential lot items")
+        for pattern in patterns:
+            for link in pattern:
+                href = link.get('href')
+                if href:
+                    # Build full URL
+                    if href.startswith('/'):
+                        full_url = 'https://www.christies.com' + href
+                    elif href.startswith('http'):
+                        full_url = href
+                    else:
+                        continue
 
-        for item in lot_items[:100]:  # Limit to first 100 to avoid overwhelming
+                    # Avoid duplicates
+                    if full_url not in auction_links:
+                        auction_links.append(full_url)
+
+        return auction_links
+
+    def scrape_auction_page(self, auction_url: str) -> List[Dict]:
+        """
+        Scrape individual auction page to get lot data
+        Each lot has: artist, title, price, lot number, etc.
+        """
+        self.driver.get(auction_url)
+        time.sleep(3)
+
+        # Scroll to load all lots
+        self.scroll_to_load_all()
+
+        # Parse lots
+        soup = BeautifulSoup(self.driver.page_source, 'lxml')
+        lots = []
+
+        # TODO: Update selector based on actual auction page HTML
+        # Look for lot items
+        lot_items = soup.find_all(['div', 'article'], class_=lambda x: x and 'lot' in x.lower())
+
+        print(f"    Found {len(lot_items)} lots in this auction")
+
+        for item in lot_items:
             try:
-                sale_data = self.extract_sale_data(item)
-                if sale_data and sale_data.get('price'):  # Only include items with prices
-                    sales.append(sale_data)
+                lot_data = self.extract_sale_data(item)
+                if lot_data and lot_data.get('price'):
+                    lots.append(lot_data)
             except Exception as e:
-                print(f"Error parsing individual item: {str(e)}")
                 continue
 
-        return sales
+        return lots
 
     def extract_sale_data(self, item_element) -> Dict:
         """Extract sale data from a single lot item"""

@@ -52,6 +52,12 @@ class SothebysScraper:
         """
         Login to Sotheby's account
         Returns True if successful, False otherwise
+
+        TODO: Update selectors after inspecting actual login page HTML
+        Common field selectors to try:
+        - By.ID: "email", "username", "login-email"
+        - By.NAME: "email", "username"
+        - By.CSS_SELECTOR: "input[type='email']"
         """
         if not self.email or not self.password:
             print("Cannot login: credentials not provided")
@@ -62,35 +68,100 @@ class SothebysScraper:
 
             # Go to login page
             self.driver.get("https://www.sothebys.com/en/login")
-            time.sleep(3)
+            time.sleep(5)  # Wait for page to fully load
 
-            # Find and fill email field
-            email_field = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.ID, "email"))  # Adjust selector as needed
-            )
+            # TODO: Update these selectors based on actual HTML
+            # Try multiple selector patterns
+
+            # Try to find email field
+            email_field = None
+            email_selectors = [
+                (By.ID, "email"),
+                (By.NAME, "email"),
+                (By.ID, "username"),
+                (By.CSS_SELECTOR, "input[type='email']"),
+                (By.CSS_SELECTOR, "input[name='email']"),
+            ]
+
+            for by, selector in email_selectors:
+                try:
+                    email_field = WebDriverWait(self.driver, 5).until(
+                        EC.presence_of_element_located((by, selector))
+                    )
+                    print(f"  Found email field: {by}='{selector}'")
+                    break
+                except:
+                    continue
+
+            if not email_field:
+                print("  ERROR: Could not find email field - check HTML selectors")
+                return False
+
             email_field.send_keys(self.email)
+            time.sleep(1)
 
-            # Find and fill password field
-            password_field = self.driver.find_element(By.ID, "password")  # Adjust selector as needed
+            # Try to find password field
+            password_field = None
+            password_selectors = [
+                (By.ID, "password"),
+                (By.NAME, "password"),
+                (By.CSS_SELECTOR, "input[type='password']"),
+            ]
+
+            for by, selector in password_selectors:
+                try:
+                    password_field = self.driver.find_element(by, selector)
+                    print(f"  Found password field: {by}='{selector}'")
+                    break
+                except:
+                    continue
+
+            if not password_field:
+                print("  ERROR: Could not find password field - check HTML selectors")
+                return False
+
             password_field.send_keys(self.password)
+            time.sleep(1)
 
-            # Click login button
-            login_button = self.driver.find_element(By.CSS_SELECTOR, "button[type='submit']")  # Adjust selector
+            # Try to find and click login button
+            login_button = None
+            button_selectors = [
+                (By.CSS_SELECTOR, "button[type='submit']"),
+                (By.XPATH, "//button[contains(text(), 'Sign In')]"),
+                (By.XPATH, "//button[contains(text(), 'Log In')]"),
+                (By.CSS_SELECTOR, "input[type='submit']"),
+            ]
+
+            for by, selector in button_selectors:
+                try:
+                    login_button = self.driver.find_element(by, selector)
+                    print(f"  Found login button: {by}='{selector}'")
+                    break
+                except:
+                    continue
+
+            if not login_button:
+                print("  ERROR: Could not find login button - check HTML selectors")
+                return False
+
             login_button.click()
 
             # Wait for login to complete
-            time.sleep(5)
+            print("  Waiting for login to complete...")
+            time.sleep(7)
 
-            # Check if login was successful (adjust verification logic)
-            if "login" not in self.driver.current_url.lower():
-                print("Login successful!")
+            # Check if login was successful
+            current_url = self.driver.current_url.lower()
+            if "login" not in current_url:
+                print("✓ Login successful!")
                 return True
             else:
-                print("Login may have failed - still on login page")
+                print("✗ Login may have failed - still on login page")
+                print(f"  Current URL: {self.driver.current_url}")
                 return False
 
         except Exception as e:
-            print(f"Login error: {str(e)}")
+            print(f"✗ Login error: {str(e)}")
             return False
 
     def get_url_for_month(self, year: int, month: int) -> str:
@@ -164,7 +235,12 @@ class SothebysScraper:
                 self.driver.quit()
 
     def get_auction_links(self) -> List[str]:
-        """Get links to individual auction result pages"""
+        """
+        Get links to individual auction result pages
+        Looks for "View Results" or "View Auction" buttons
+
+        TODO: Update selector after inspecting actual results page
+        """
         links = []
 
         # Scroll to load all auctions
@@ -172,14 +248,34 @@ class SothebysScraper:
 
         soup = BeautifulSoup(self.driver.page_source, 'lxml')
 
-        # TODO: Update selector based on actual Sotheby's HTML
-        # Look for "View Results" or "View Auction" links
-        auction_elements = soup.find_all('a', href=True, string=lambda x: x and ('view results' in x.lower() or 'view auction' in x.lower()))
+        # Try multiple patterns to find auction links
+        print("  Looking for auction links...")
 
-        for elem in auction_elements:
-            href = elem['href']
-            full_url = 'https://www.sothebys.com' + href if href.startswith('/') else href
-            links.append(full_url)
+        # Pattern 1: Links with "View Results" text
+        view_links = soup.find_all('a', string=lambda x: x and 'view results' in x.lower())
+        print(f"    Found {len(view_links)} 'View Results' links")
+
+        for elem in view_links:
+            href = elem.get('href')
+            if href:
+                full_url = 'https://www.sothebys.com' + href if href.startswith('/') else href
+                if full_url not in links:
+                    links.append(full_url)
+
+        # Pattern 2: Links with "View Auction" text
+        auction_links = soup.find_all('a', string=lambda x: x and 'view auction' in x.lower())
+        print(f"    Found {len(auction_links)} 'View Auction' links")
+
+        for elem in auction_links:
+            href = elem.get('href')
+            if href:
+                full_url = 'https://www.sothebys.com' + href if href.startswith('/') else href
+                if full_url not in links:
+                    links.append(full_url)
+
+        # Pattern 3: Buttons with these texts
+        buttons = soup.find_all('button', string=lambda x: x and ('view' in x.lower() and ('results' in x.lower() or 'auction' in x.lower())))
+        print(f"    Found {len(buttons)} view buttons")
 
         return links
 
